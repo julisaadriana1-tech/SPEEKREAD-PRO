@@ -23,7 +23,7 @@ class LearnScreen extends ConsumerWidget {
       initialIndex: levels.indexOf(current).clamp(0, levels.length - 1),
       child: SafeArea(
         child: Column(children: [
-          const TabBar(
+          TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
             tabs: [for (final l in levels) Tab(text: l)],
