@@ -1,0 +1,131 @@
+# Receta automática: prepara la base de datos, configura Azure y arma el APK.
+# Para usarla: pestaña Actions → "Armar SpeakRead" → Run workflow.
+name: Armar SpeakRead
+
+on:
+  workflow_dispatch:
+    inputs:
+      preparar_base:
+        description: "¿Preparar la base de datos y las funciones? (solo hace falta la primera vez o si cambian)"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  base-de-datos:
+    name: 1 · Base de datos y funciones (Supabase)
+    if: github.event_name == 'workflow_dispatch' && inputs.preparar_base
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Revisar que estén las claves
+        run: |
+          faltan=""
+          for k in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD SUPABASE_PROJECT_REF AZURE_SPEECH_KEY AZURE_SPEECH_REGION; do
+            if [ -z "${!k}" ]; then faltan="$faltan $k"; fi
+          done
+          if [ -n "$faltan" ]; then
+            echo "::error::Faltan estas claves en Settings → Secrets and variables → Actions:$faltan"
+            exit 1
+          fi
+        env:
+          AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+          AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Conectar con tu proyecto de Supabase
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Crear tablas y cargar lecciones de ejemplo
+        run: supabase db push --include-seed --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Guardar las claves de Azure (secretas) en Supabase
+        run: supabase secrets set AZURE_SPEECH_KEY="$AZURE_SPEECH_KEY" AZURE_SPEECH_REGION="$AZURE_SPEECH_REGION" --project-ref "$SUPABASE_PROJECT_REF"
+        env:
+          AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+          AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
+
+      - name: Publicar la función que evalúa tu pronunciación
+        run: supabase functions deploy assess-pronunciation --project-ref "$SUPABASE_PROJECT_REF"
+
+  apk:
+    name: 2 · Armar la app (APK)
+    needs: base-de-datos
+    if: always() && (needs.base-de-datos.result == 'success' || needs.base-de-datos.result == 'skipped')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generar la carpeta de Android
+        run: flutter create . --platforms=android --org com.speakread --project-name speakread
+
+      - name: Permisos de micrófono
+        run: dart run tool/setup_platforms.dart
+
+      - name: Descargar librerías
+        run: flutter pub get
+
+      - name: Revisar el código
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Pruebas
+        run: flutter test
+
+      - name: Configurar la conexión con Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          printf '{"SUPABASE_URL":"%s","SUPABASE_ANON_KEY":"%s"}' "$SUPABASE_URL" "$SUPABASE_ANON_KEY" > env.json
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "HAS_KEYS=false" >> "$GITHUB_ENV"
+            echo "::warning::Todavía no cargaste SUPABASE_URL y SUPABASE_ANON_KEY: la app se arma, pero no va a poder conectarse."
+          else
+            echo "HAS_KEYS=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Armar el APK
+        run: flutter build apk --release --dart-define-from-file=env.json
+
+      - name: Renombrar
+        run: cp build/app/outputs/flutter-apk/app-release.apk ../SpeakRead.apk
+
+      - name: Guardar el APK en esta ejecución
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpeakRead-apk
+          path: SpeakRead.apk
+
+      - name: Publicar el APK para descargar desde el celular
+        if: env.HAS_KEYS == 'true' && github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: SpeakRead versión ${{ github.run_number }}
+          body: Descargá SpeakRead.apk desde el celular y abrilo para instalar.
+          files: SpeakRead.apk

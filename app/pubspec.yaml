@@ -1,0 +1,27 @@
+name: speakread
+description: "SpeakRead Pro: aprendé inglés leyendo en voz alta."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  supabase_flutter: ^2.8.0
+  flutter_riverpod: ^2.6.1
+  go_router: ^14.6.0
+  record: ^5.2.0
+  just_audio: ^0.9.42
+  flutter_tts: ^4.2.0
+  path_provider: ^2.1.5
+  google_fonts: ^6.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

@@ -1,0 +1,6 @@
+# Configuración mínima para la CLI de Supabase (la usa la receta de GitHub).
+project_id = "speakread"
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
